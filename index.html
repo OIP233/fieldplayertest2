@@ -3529,7 +3529,7 @@ const I18N = {
     'sit.situation': 'Situatie', 'sec.attention': 'Aandachtspunten',
     'phase.prep': 'Voorbereiding', 'phase.execute': 'Uitvoering', 'phase.secure': 'Veiligstellen',
     'phase.deviation': 'Afwijking', 'phase.assess': 'Waarnemen', 'phase.act': 'Handelen', 'phase.report': 'Rapporteren',
-    'log.label': 'Eigen actie-log', 'log.empty': 'Nog geen acties gelogd.', 'log.ph': 'Actie...',
+    'log.label': 'Opmerkingen / bevindingen', 'log.empty': 'Nog geen opmerkingen genoteerd.', 'log.ph': 'Opmerking of bevinding over dit scenario...',
     'advice.deviation': 'Advies bij afwijking', 'advice.secure': 'Veiligstellen-advies',
     'exec.auto': 'automatisch',
     'lmra.done': '✓ LMRA voltooid', 'lmra.notdone': 'LMRA nog niet ingevuld', 'lmra.fill': 'LMRA invullen',
@@ -3619,7 +3619,7 @@ const I18N = {
     'sit.situation': 'Situation', 'sec.attention': 'Points of attention',
     'phase.prep': 'Preparation', 'phase.execute': 'Execution', 'phase.secure': 'Make safe',
     'phase.deviation': 'Deviation', 'phase.assess': 'Observe', 'phase.act': 'Act', 'phase.report': 'Report',
-    'log.label': 'Own action log', 'log.empty': 'No actions logged yet.', 'log.ph': 'Action...',
+    'log.label': 'Remarks / findings', 'log.empty': 'No remarks noted yet.', 'log.ph': 'Remark or finding about this scenario...',
     'advice.deviation': 'Advice on deviation', 'advice.secure': 'Make-safe advice',
     'exec.auto': 'automatic',
     'lmra.done': '✓ LMRA completed', 'lmra.notdone': 'LMRA not completed yet', 'lmra.fill': 'Complete LMRA',
@@ -6628,7 +6628,7 @@ ${fmtEA(shouldList)}
 Verwachte acties — could:
 ${fmtEA(couldList)}
 
-Eigen actie-log van deelnemer:
+Privé-notities van deelnemer over het scenario (NIET in-fictie op reageren — dit is evaluatie-feedback):
 ${logLines}`;
   } else {
     // PROCEDURAL
@@ -8331,8 +8331,8 @@ function buildDebriefPrompt(fromHoldPoint) {
   // Actielog — beschikbaar voor beide scenariotypes als ingeschakeld
   if (sc.participantActionLog?.enabled !== false) {
     const logTxt = (STATE.actionLog || []).map(e => `  [${e.time}] ${e.text}`).join('\n')
-                || '  (deelnemer heeft niets in eigen actie-log gezet)';
-    actionsBlock += `\n\nEIGEN ACTIE-LOG VAN DEELNEMER:\n${logTxt}`;
+                || '  (deelnemer heeft geen opmerkingen genoteerd)';
+    actionsBlock += `\n\nOPMERKINGEN/BEVINDINGEN VAN DEELNEMER OVER HET SCENARIO (eigen evaluatie — beoordeel de deelnemer hier NIET op; deze notities dienen om het scenario te verbeteren. Je mag ze hooguit kort en neutraal samenvatten):\n${logTxt}`;
   }
 
   // Procedure-onvolkomenheden — questioning-attitude beoordeling.
@@ -8697,6 +8697,13 @@ function renderFieldDebrief(d, fromHoldPoint) {
       </div>`;
     }).join('');
 
+    // Opmerkingen / bevindingen van de deelnemer (eigen evaluatie van het scenario)
+    const notes = STATE.actionLog || [];
+    const notesRows = notes.map(e => `<div class="dbf-learn-item">
+      <span class="dbf-learn-tag" style="background:#455a64">${escapeHtml(e.time || '')}</span>
+      <div class="dbf-learn-text">${escapeHtml(e.text || '')}</div>
+    </div>`).join('');
+
     const section = (key, icon, title, bodyHtml, count, openByDefault) => `
       <div class="dbf-section">
         <div class="dbf-sec-hdr" onclick="toggleDebriefSection('${key}')">
@@ -8721,7 +8728,8 @@ function renderFieldDebrief(d, fromHoldPoint) {
       section('comms', '📡', L.comms, `<div id="dbf-comms-container">${commsHtml}</div>`, '', true) +
       section('commlog', '🎙', L.commlog, `<div id="dbf-commlog">${commlogRows}</div>`, outCount ? outCount + '×' : '', false) +
       section('learning', '→', L.learning, `<div id="dbf-learning-points">${lpRows}</div>`, lps.length || '', true) +
-      (pc.length ? section('procedure', '🔍', L.procedure, `<div id="dbf-procedure-points">${pcRows}</div>`, pc.length, true) : '');
+      (pc.length ? section('procedure', '🔍', L.procedure, `<div id="dbf-procedure-points">${pcRows}</div>`, pc.length, true) : '') +
+      (notes.length ? section('notes', '📝', t('log.label'), `<div id="dbf-notes">${notesRows}</div>`, notes.length, false) : '');
 
     // Animeer balken na render
     setTimeout(() => {
@@ -9048,7 +9056,7 @@ function getExportLabels() {
       timing: 'Tijdsbesteding', norm: 'Normtijd', within: 'binnen norm', over: 'overschrijding',
       firstAction: 'Tijd tot eerste must-actie', target: 'doel',
       actionsOverview: 'Acties — overzicht', reported: 'gerapporteerd', notDone: 'niet gerapporteerd',
-      actionLog: 'Eigen actie-log', noLog: '(geen waarnemingen gelogd)',
+      actionLog: 'Opmerkingen van de deelnemer', noLog: '(geen opmerkingen genoteerd)',
       debrief: 'Evaluatie door Instructeur', holdInfo: 'Hold-point informatie',
       footer: 'OIP Field Scenario · gegenereerd op',
       excelHeaders: ['Datum','Deelnemer','Scenario','Type','Duur','Afsluiting','Hold-point reden','Normtijd / target','Binnen norm','Acties gedaan','Acties totaal','Debrief samenvatting'],
@@ -9064,7 +9072,7 @@ function getExportLabels() {
       timing: 'Zeitaufwand', norm: 'Normzeit', within: 'innerhalb der Norm', over: 'Überschreitung',
       firstAction: 'Zeit bis zur ersten Must-Aktion', target: 'Ziel',
       actionsOverview: 'Aktionen — Übersicht', reported: 'gemeldet', notDone: 'nicht gemeldet',
-      actionLog: 'Eigenes Aktionsprotokoll', noLog: '(keine Beobachtungen protokolliert)',
+      actionLog: 'Anmerkungen des Teilnehmers', noLog: '(keine Anmerkungen notiert)',
       debrief: 'Auswertung durch Instruktor', holdInfo: 'Hold-Point-Informationen',
       footer: 'OIP Field Scenario · erstellt am',
       excelHeaders: ['Datum','Teilnehmer','Szenario','Typ','Dauer','Abschluss','Hold-Point Grund','Normzeit / Ziel','Innerhalb Norm','Aktionen erledigt','Aktionen gesamt','Auswertungs-Zusammenfassung'],
@@ -9080,7 +9088,7 @@ function getExportLabels() {
       timing: 'Time spent', norm: 'Normative time', within: 'within norm', over: 'over by',
       firstAction: 'Time to first must-action', target: 'target',
       actionsOverview: 'Actions — overview', reported: 'reported', notDone: 'not reported',
-      actionLog: 'Own action log', noLog: '(no observations logged)',
+      actionLog: 'Participant remarks', noLog: '(no remarks noted)',
       debrief: 'Evaluation by Instructor', holdInfo: 'Hold-point information',
       footer: 'OIP Field Scenario · generated on',
       excelHeaders: ['Date','Participant','Scenario','Type','Duration','Outcome','Hold-point reason','Norm time / target','Within norm','Actions done','Actions total','Debrief summary'],
@@ -9096,7 +9104,7 @@ function getExportLabels() {
       timing: 'Tiempo empleado', norm: 'Tiempo normativo', within: 'dentro de la norma', over: 'sobre',
       firstAction: 'Tiempo hasta la primera acción obligatoria', target: 'objetivo',
       actionsOverview: 'Acciones — resumen', reported: 'reportado', notDone: 'no reportado',
-      actionLog: 'Registro de acciones propio', noLog: '(no se registraron observaciones)',
+      actionLog: 'Observaciones del participante', noLog: '(sin observaciones anotadas)',
       debrief: 'Evaluación del Instructor', holdInfo: 'Información del hold-point',
       footer: 'OIP Field Scenario · generado el',
       excelHeaders: ['Fecha','Participante','Escenario','Tipo','Duración','Resultado','Motivo hold-point','Tiempo norma / objetivo','Dentro de norma','Acciones hechas','Acciones total','Resumen evaluación'],
@@ -9255,7 +9263,7 @@ function buildDebriefHTML() {
     </tr>`;
   }).join('');
 
-  // Eigen actie-log (alleen incident)
+  // Opmerkingen / bevindingen van de deelnemer (beide scenariotypes)
   const logRows = (STATE.actionLog || []).map(e =>
     `<tr><td style="width:60px;font-family:monospace;color:#666">${e.time}</td><td>${escapeHtml(e.text)}</td></tr>`
   ).join('');
@@ -9490,8 +9498,7 @@ ${timelineBlock}
 <h3>${L.actionsOverview} (${stats.done}/${stats.total})</h3>
 <table>${actionsRows || `<tr><td colspan="3" style="color:#888;text-align:center">—</td></tr>`}</table>
 
-${isIncident && logRows ? `<h3>${L.actionLog}</h3><table>${logRows}</table>` : ''}
-${isIncident && !logRows ? `<h3>${L.actionLog}</h3><p style="color:#888;font-style:italic">${L.noLog}</p>` : ''}
+${logRows ? `<h3>${L.actionLog}</h3><table>${logRows}</table>` : ''}
 
 ${learningBlock}
 ${procedureBlock}
