@@ -2758,6 +2758,9 @@ input, textarea {
         <button class="obs-btn" onclick="observe('geur')" data-i18n="obs.smell">👃 Ruik</button>
         <button class="obs-btn" onclick="observe('aanraking')" data-i18n="obs.touch">✋ Voel</button>
       </div>
+      <div class="observation-buttons" style="margin-top:6px">
+        <button class="obs-btn" onclick="raiseProcedureConcern()" data-i18n="concern.btn" data-i18n-title="concern.title" title="Stel een stap in de procedure formeel ter discussie">⚠ Procedure-bezwaar</button>
+      </div>
 
       <div id="input-bar">
         <div class="channel-row">
@@ -3340,6 +3343,8 @@ const STATE = {
   conversationHistory: [],              // {role: 'user'|'assistant', content: '...'}
   sopChecked: {},                       // legacy — niet meer actief gebruikt
   assignmentChecked: {},                // {actionId: true} voor prep- én execute-acties
+  imperfectionsCaught: {},              // {impId: ms} — procedure-onvolkomenheid terecht opgemerkt
+  imperfectionsFalse: {},               // {impId: ms} — afleider onterecht als fout bestempeld
   lmraCompleted: false,
   lmraAnsweredCount: 0,
   onsiteLmraDone: false,                // on-site LMRA (bij aankomst werkplek) eenmalig bevestigd
@@ -3489,6 +3494,9 @@ const I18N = {
     'coach.gotIt': 'Begrepen',
     'obs.look': '👁 Kijk', 'obs.listen': '👂 Luister', 'obs.smell': '👃 Ruik', 'obs.touch': '✋ Voel',
     'input.speakTo': 'Spreek tot:',
+    'concern.btn': '⚠ Procedure-bezwaar',
+    'concern.title': 'Stel een stap in de procedure formeel ter discussie',
+    'concern.lead': 'Ik twijfel of deze stap in de procedure klopt: ',
     'voice.dismissTitle': 'Verbergen',
     'voice.recording': 'Opname loopt…',
     'input.ph': 'Typ je bericht en druk op verzenden (of Enter)...',
@@ -3535,6 +3543,8 @@ const I18N = {
     'err.voice': 'Spraakfout: ',
     'log.phase': 'Fase: {name}',
     'log.actionDone': 'Actie voltooid: {label}',
+    'log.impCaught': 'Procedure-onvolkomenheid opgemerkt: {label}',
+    'log.impFalse': 'Correcte stap onterecht als fout aangemerkt: {label}',
   },
   en: {
     'key.sub': 'No API key found in the scenario file. Enter an Anthropic API key manually to continue.',
@@ -3578,6 +3588,9 @@ const I18N = {
     'coach.gotIt': 'Got it',
     'obs.look': '👁 Look', 'obs.listen': '👂 Listen', 'obs.smell': '👃 Smell', 'obs.touch': '✋ Feel',
     'input.speakTo': 'Speak to:',
+    'concern.btn': '⚠ Procedure concern',
+    'concern.title': 'Formally challenge a step in the procedure',
+    'concern.lead': 'I doubt whether this procedure step is correct: ',
     'voice.dismissTitle': 'Hide',
     'voice.recording': 'Recording…',
     'input.ph': 'Type your message and press send (or Enter)...',
@@ -3620,6 +3633,8 @@ const I18N = {
     'err.voice': 'Voice error: ',
     'log.phase': 'Phase: {name}',
     'log.actionDone': 'Action completed: {label}',
+    'log.impCaught': 'Procedure imperfection noticed: {label}',
+    'log.impFalse': 'Correct step wrongly flagged as faulty: {label}',
   },
 };
 
@@ -6080,6 +6095,9 @@ function getTimingStatus() {
 function buildSystemPrompt() {
   const sc = getScenario();
   const isIncident = sc.scenarioType === 'incident';
+  // Procedural-scenario met ingebouwde afwijking AAN? Zo niet, dan bestaat er
+  // geen deviation- én geen secure-fase: na de uitvoering volgt direct de debrief.
+  const devEnabled = !isIncident && (sc.deviation?.enabled !== false);
   // v19: de "type" tussen haakjes is een interne categorie voor radio-gedrag —
   // de AI moet rollen ALTIJD aanspreken/aanduiden met hun NAAM (bv. "CRO",
   // "Karel", "Supervisor"), nooit met het type ("dispatch", "colleague" enz.).
@@ -6105,6 +6123,8 @@ function buildSystemPrompt() {
   ).join('\n');
 
   const phaseConfigText = Object.entries(sc.phaseConfig || {})
+    // Zonder ingebouwde afwijking: deviation- en secure-fase niet aan de AI tonen.
+    .filter(([k]) => devEnabled || isIncident || (k !== 'deviation' && k !== 'secure'))
     .map(([k,v]) => `- ${k}: ${v.dir}`).join('\n');
 
   // ─── Company context (denormalized from controller's profile library) ───
@@ -6273,7 +6293,6 @@ ${refProc}`;
       .map(s => `  ${s.order}. [${s.id}] ${s.label} — ${s.instruction} (verwacht: ${s.expectedAction}${s.lsrTags.length ? '; LSR-relevantie: ' + s.lsrTags.join(', ') : ''})`)
       .join('\n');
 
-    const devEnabled = sc.deviation?.enabled !== false;
     const phaseListText = devEnabled
       ? `- prep      (Voorbereiding)
 - execute   (Uitvoering — SOP-stappen)
@@ -6281,9 +6300,8 @@ ${refProc}`;
 - secure    (Veiligstellen)`
       : `- prep      (Voorbereiding)
 - execute   (Uitvoering — SOP-stappen)
-- secure    (Veiligstellen)
 
-LET OP: dit scenario heeft GEEN ingebouwde afwijking. De uitvoering verloopt rustig en procedureel. Stuur GEEN [FASE: deviation]. Beoordeel SOP-discipline, communicatie, en correct gebruik van werkpermit/LMRA.`;
+LET OP: dit scenario heeft GEEN ingebouwde afwijking en GEEN veiligstel-fase. De uitvoering verloopt rustig en procedureel; na de uitvoering volgt direct de debrief. Stuur GEEN [FASE: deviation] en GEEN [FASE: secure]. Zodra de laatste uitvoeringsstap correct is afgerond — en, indien de instructeur-mode dat voorschrijft, de eind-reflectie is beantwoord — stuur je [SCENARIO-EINDE]. Beoordeel SOP-discipline, communicatie, en correct gebruik van werkpermit/LMRA.`;
 
     const deviationBlock = devEnabled ? `
 
@@ -6330,10 +6348,10 @@ Voorbereiding:
 ${groupSteps('prep')}
 
 Uitvoering:
-${groupSteps('execute')}
+${groupSteps('execute')}${devEnabled ? `
 
 Veiligstellen-procedure:
-${groupSteps('secure')}${(sc.sop.sourceText && sc.sop.sourceText.trim()) ? `
+${groupSteps('secure')}` : ''}${(sc.sop.sourceText && sc.sop.sourceText.trim()) ? `
 
 ═══════════════════════════════════════════════════════════
 BRON-SOP — letterlijke referentietekst van het bedrijf
@@ -6342,6 +6360,35 @@ De gestructureerde stappen hierboven zijn de toetslat (het WAT). Gebruik onderst
 
 ${sc.sop.sourceText.trim()}` : ''}${deviationBlock}`;
   }
+
+  // Ingebouwde procedure-onvolkomenheden (questioning-attitude test) — verborgen waarheid voor de AI.
+  const imps = (!isIncident && Array.isArray(sc.sopImperfections)) ? sc.sopImperfections : [];
+  const realImps = imps.filter(im => !im.isDistractor);
+  const distractorImps = imps.filter(im => im.isDistractor);
+  const impStepLabel = (id) => {
+    const st = (sc.sop?.steps || []).find(s => s.id === id);
+    return st ? `[${st.id}] ${st.label}` : (id || '(algemeen)');
+  };
+  const imperfectionsBlock = imps.length ? `
+═══════════════════════════════════════════════════════════
+INGEBOUWDE PROCEDURE-ONVOLKOMENHEDEN — VERBORGEN VOOR DEELNEMER
+═══════════════════════════════════════════════════════════
+Dit scenario test of de deelnemer fouten in de PROCEDURE zelf opmerkt (questioning attitude), niet alleen of hij de stappen netjes uitvoert. De SOP die de deelnemer ziet bevat met OPZET de onderstaande onvolkomenheden.
+
+ABSOLUTE REGELS:
+- Wijs de deelnemer hier NOOIT uit jezelf op. GEEN enkele rol (CRO, collega, supervisor, instructeur) corrigeert de procedure spontaan.
+- Alleen als de deelnemer ZELF twijfelt, een stap bevraagt, verifieert of weigert, mag de aangesproken rol kort en in-fictie bevestigen of ontkennen ("goeie vraag — klopt die volgorde wel? check even de laatste revisie").
+- Zodra de deelnemer een specifieke onvolkomenheid daadwerkelijk aankaart, verifieert of weigert (volgens 'telt als opgemerkt'), stuur je in diezelfde beurt [ONVOLKOMENHEID-OPGEMERKT: <id>].
+${realImps.map(im => `
+- id ${im.id} | stap ${impStepLabel(im.stepId)} | type ${im.type}${im.severity ? ' | ernst ' + im.severity : ''}
+  WAT DE DEELNEMER ZIET (fout): ${im.flawedText || '(de fout zit in de stap zelf)'}
+  JUISTE VERSIE: ${im.correctText || '(niet gespecificeerd)'}
+  GEVOLG BIJ BLIND VOLGEN: ${im.consequence === 'feel' ? ('VOELBAAR — ' + (im.consequenceDescription || 'speel een merkbaar gevolg uit als de deelnemer dit klakkeloos opvolgt')) : 'STIL — geen direct gevolg; alleen relevant voor de debrief'}
+  TELT ALS OPGEMERKT: ${im.detectionCriteria || 'de deelnemer benoemt expliciet dat deze stap niet klopt of onveilig is'}`).join('\n')}
+${distractorImps.length ? `
+AFLEIDERS (lijken fout maar zijn CORRECT — de deelnemer hoort ze NIET als fout te melden):${distractorImps.map(im => `
+- id ${im.id} | stap ${impStepLabel(im.stepId)} | reden dat het tóch klopt: ${im.correctText || '(de stap is correct)'}`).join('')}
+Als de deelnemer een afleider onterecht als fout bestempelt: stuur [ONVOLKOMENHEID-VALS: <id>] en bevestig rustig in-fictie dat die stap wél klopt.` : ''}` : '';
 
   // Instructeur-mode bepaalt hoeveel ruimte de instructeur krijgt
   const mode = sc.instructor?.mode || 'observerend';
@@ -6356,7 +6403,7 @@ ${sc.sop.sourceText.trim()}` : ''}${deviationBlock}`;
 
 1. HOLD-POINT-DREIGING: als de deelnemer richting een hold-point beweegt maar de onomkeerbare actie nog niet heeft uitgevoerd, mag de instructeur ÉÉN keer kort vragen wat de deelnemer van plan is. Voorbeeld: "Wacht — wat ben je nu van plan?". Dat is alles. Geen advies, geen waarschuwing. Als de deelnemer alsnog doorgaat: laat hem doorgaan en het hold-point zal triggeren.
 
-2. EIND-REFLECTIE: vlak vóór het scenario naar debrief gaat (na laatste secure-stap), stel je deze ene vraag als Instructeur:
+2. EIND-REFLECTIE: vlak vóór het scenario naar debrief gaat (${devEnabled ? 'na de laatste secure-stap' : 'na de laatste uitvoeringsstap'}), stel je deze ene vraag als Instructeur:
    "${sc.instructor.endReflectionQuestion}"
    Pas NA een adequaat antwoord stuur je [SCENARIO-EINDE].
 
@@ -6412,11 +6459,11 @@ ${instructorSection[mode] || instructorSection['observerend']}
 ═══════════════════════════════════════════════════════════
 FASES EN PER-FASE RICHTLIJNEN
 ═══════════════════════════════════════════════════════════
-${isIncident 
+${isIncident
   ? 'Vaste volgorde: assess → act → report → einde'
-  : (sc.deviation?.enabled !== false
+  : (devEnabled
       ? 'Vaste volgorde: prep → execute → deviation → secure → einde'
-      : 'Vaste volgorde: prep → execute → secure → einde  (GEEN afwijking-fase in dit scenario)')
+      : 'Vaste volgorde: prep → execute → einde  (GEEN afwijking-fase en GEEN veiligstel-fase in dit scenario)')
 }
 
 ${phaseConfigText}
@@ -6424,6 +6471,7 @@ ${phaseConfigText}
 De fase-overgangen gebeuren op basis van wat de deelnemer doet en wat het scenario vereist. Geen poortvragen bij overgangen tenzij instructeur-mode dat expliciet voorschrijft.
 
 ${trackSection}
+${imperfectionsBlock}
 ${companyContextBlock}
 ═══════════════════════════════════════════════════════════
 LOCATIES
@@ -6470,12 +6518,14 @@ Voorbeelden:
 [ROL: Instructeur] Wacht — wat ben je nu van plan?
 
 Beschikbare systeemtokens (op een aparte regel):
-[FASE: ${isIncident ? 'assess|act|report' : 'prep|execute|deviation|secure'}]  — wissel actieve fase
+[FASE: ${isIncident ? 'assess|act|report' : (devEnabled ? 'prep|execute|deviation|secure' : 'prep|execute')}]  — wissel actieve fase
 [WAARNEMING: zicht|geluid|geur|aanraking] beschrijvende tekst  — werk omgevingstekst bij
 [ACTIE-VOLTOOID: <action-id>]  — markeer een uitvoerings-actie of verwachte-actie als voltooid
 [AUDIO: <effect-name>]  — speel een geluidseffect af; één per beurt, alleen op betekenisvolle momenten
 [HOLD-POINT: <hp-id>]  — scenario stopt direct (gebruik deze voor ALLE hold-point categorieën)
 [SCENARIO-EINDE]  — scenario voltooid, ga naar debrief
+[ONVOLKOMENHEID-OPGEMERKT: <imp-id>]  — deelnemer kaart een ingebouwde procedure-fout terecht aan
+[ONVOLKOMENHEID-VALS: <imp-id>]  — deelnemer bestempelt een afleider (correcte stap) onterecht als fout
 
 BESCHIKBARE AUDIO-EFFECTS (gebruik spaarzaam — alleen bij betekenisvolle gebeurtenissen):
 - valve-open: bij openen van een klep (wanneer deelnemer het uitvoert)
@@ -6682,8 +6732,13 @@ async function parseAndApplyAIResponse(reply) {
   const endMatch = reply.match(/\[SCENARIO-EINDE\]/);
 
   // 3. Fase-wissel
+  // Zonder ingebouwde afwijking bestaat er geen deviation- of secure-fase:
+  // negeer die fase-tokens deterministisch, ongeacht wat de AI stuurt.
+  const _scPhase = getScenario();
+  const _devOff = _scPhase && _scPhase.scenarioType !== 'incident' && _scPhase.deviation && _scPhase.deviation.enabled === false;
   const phaseMatches = [...reply.matchAll(/\[FASE:\s*(prep|execute|deviation|secure|assess|act|report)\s*\]/g)];
   for (const m of phaseMatches) {
+    if (_devOff && (m[1] === 'secure' || m[1] === 'deviation')) continue;
     setPhase(m[1]);
   }
 
@@ -6705,6 +6760,12 @@ async function parseAndApplyAIResponse(reply) {
     playEffect(m[1]);
   }
 
+  // 4d. Procedure-onvolkomenheid opgemerkt / vals geflagd (questioning-attitude test)
+  const impCaughtMatches = [...reply.matchAll(/\[ONVOLKOMENHEID-OPGEMERKT:\s*([a-zA-Z0-9_-]+)\s*\]/g)];
+  for (const m of impCaughtMatches) markImperfection(m[1], 'caught');
+  const impFalseMatches = [...reply.matchAll(/\[ONVOLKOMENHEID-VALS:\s*([a-zA-Z0-9_-]+)\s*\]/g)];
+  for (const m of impFalseMatches) markImperfection(m[1], 'false');
+
   // 5. Strip systeemtokens uit zichtbare tekst
   let cleanReply = reply
     .replace(/\[FASE:[^\]]+\]/g, '')
@@ -6713,6 +6774,8 @@ async function parseAndApplyAIResponse(reply) {
     .replace(/\[AUDIO:[^\]]+\]/g, '')
     .replace(/\[HOLD-POINT:[^\]]+\]/g, '')
     .replace(/\[LSR-OVERTREDING:[^\]]+\]/g, '')
+    .replace(/\[ONVOLKOMENHEID-OPGEMERKT:[^\]]+\]/g, '')
+    .replace(/\[ONVOLKOMENHEID-VALS:[^\]]+\]/g, '')
     .replace(/\[SCENARIO-EINDE\]/g, '')
     .trim();
 
@@ -7006,16 +7069,18 @@ function renderEnvironment() {
   }
 
   // Signalen die nu zichtbaar zijn: matching op huidige fase EN locatie.
-  // Voor procedural: als signaal een fromActionId heeft, alleen tonen
-  // zodra die actie "aan de beurt is" — d.w.z. alle voorgaande acties
-  // in dezelfde fase zijn afgevinkt. Eenmaal zichtbaar blijft het signaal
-  // automatisch in beeld zolang de fase loopt (omdat de check op
-  // voorgaande acties dan voldaan blijft).
+  // Voor procedural: een signaal met fromActionId is gekoppeld aan precies
+  // één actie en is alleen zichtbaar zolang DIE actie "aan de beurt is":
+  // alle voorgaande acties in de fase zijn afgevinkt, maar de eigen actie
+  // nog niet. Zodra de bijbehorende actie is voltooid, verdwijnt het signaal
+  // (het is dan afgehandeld en hoort niet meer als reminder te blijven staan).
   const isProc = sc.scenarioType !== 'incident';
   const matchingSignals = (sc.observableSignals || []).filter(s => {
     if (s.phase !== STATE.currentPhase) return false;
     if (s.locationId !== STATE.currentLocationId) return false;
     if (!isProc || !s.fromActionId) return true;
+    // Zodra de eigen actie is afgevinkt, is het signaal afgehandeld → niet meer tonen.
+    if (STATE.assignmentChecked[s.fromActionId]) return false;
     // Stap-gebonden zichtbaarheid (alleen procedural):
     // Vind alle prep- of execute-acties van deze fase in volgorde.
     const a = sc.assignment || {};
@@ -7455,7 +7520,9 @@ function transformLoaderCard(sc) {
   if (!card) return;
 
   const typeLabel = sc.scenarioType === 'incident' ? 'Incident' : 'Procedural';
-  const phases = sc.scenarioType === 'incident' ? '3 fasen' : '4 fasen';
+  const phases = sc.scenarioType === 'incident'
+    ? '3 fasen'
+    : ((sc.deviation && sc.deviation.enabled === false) ? '2 fasen' : '4 fasen');
   const driver = sc.scenarioType === 'incident' ? 'Beoordelings-gedreven' : 'SOP-gedreven';
   const diff   = sc.difficulty ? ('Difficulty ' + sc.difficulty) : 'Custom';
 
@@ -7597,6 +7664,8 @@ async function startScenario() {
   STATE.debriefData = null;
   STATE.debriefText = '';
   STATE.deviationReached = false;
+  STATE.imperfectionsCaught = {};
+  STATE.imperfectionsFalse = {};
   STATE.phasesVisited = [];
   STATE.firstActionTime = null;
   STATE.onsiteLmraDone = false;
@@ -7942,6 +8011,33 @@ function markActionDone(actionId) {
   addSystemMessage(t('log.actionDone', { label: action.action || action.label }));
 }
 
+// Procedure-onvolkomenheid: AI markeert terechte detectie ('caught') of valse positieve ('false').
+function markImperfection(impId, kind) {
+  const sc = getScenario();
+  const imp = (sc.sopImperfections || []).find(i => i.id === impId);
+  if (!imp) { console.warn('ONVOLKOMENHEID-token voor onbekende id:', impId); return; }
+  const label = (imp.flawedText || imp.stepId || impId).slice(0, 60);
+  if (kind === 'false') {
+    if (STATE.imperfectionsFalse[impId]) return;
+    STATE.imperfectionsFalse[impId] = Date.now() - STATE.scenarioStartMs;
+    addSystemMessage(t('log.impFalse', { label }));
+  } else {
+    if (STATE.imperfectionsCaught[impId]) return;
+    STATE.imperfectionsCaught[impId] = Date.now() - STATE.scenarioStartMs;
+    addSystemMessage(t('log.impCaught', { label }));
+  }
+}
+
+// Deelnemer-knop: stel een procedurestap formeel ter discussie. Vult een lead-in
+// in het invoerveld zodat de deelnemer zijn bezwaar via de radio kan verwoorden.
+function raiseProcedureConcern() {
+  const ta = $('input-text');
+  if (!ta) return;
+  if (!ta.value.trim()) ta.value = t('concern.lead');
+  ta.focus();
+  try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e) {}
+}
+
 function triggerHoldPoint(hpId) {
   let hp = getScenario().holdPoints.find(h => h.id === hpId);
   if (!hp && hpId.startsWith('ad-hoc-')) {
@@ -8239,6 +8335,34 @@ function buildDebriefPrompt(fromHoldPoint) {
     actionsBlock += `\n\nEIGEN ACTIE-LOG VAN DEELNEMER:\n${logTxt}`;
   }
 
+  // Procedure-onvolkomenheden — questioning-attitude beoordeling.
+  const allImps = (!isIncident && Array.isArray(sc.sopImperfections)) ? sc.sopImperfections : [];
+  if (allImps.length) {
+    const impStepLbl = (id) => { const st = (sc.sop?.steps || []).find(s => s.id === id); return st ? `[${st.id}] ${st.label}` : (id || '(algemeen)'); };
+    const lines = allImps.map(im => {
+      const caught = STATE.imperfectionsCaught[im.id] !== undefined;
+      const falseFlag = STATE.imperfectionsFalse[im.id] !== undefined;
+      const t0 = caught ? STATE.imperfectionsCaught[im.id] : (falseFlag ? STATE.imperfectionsFalse[im.id] : null);
+      const tStr = t0 !== null ? ' (na ' + Math.floor(t0 / 1000) + 's)' : '';
+      const statusTxt = im.isDistractor
+        ? (falseFlag ? 'AFLEIDER — ONTERECHT als fout aangemerkt' + tStr : 'AFLEIDER — correct NIET geflagd')
+        : (caught ? 'OPGEMERKT' + tStr : 'GEMIST');
+      return `  - id ${im.id} | stap ${impStepLbl(im.stepId)} | type ${im.type}${im.isDistractor ? ' | AFLEIDER' : ''}
+    fout/zaak: ${im.flawedText || '(in de stap zelf)'}
+    juiste versie: ${im.correctText || '-'}
+    status deelnemer: ${statusTxt}`;
+    }).join('\n');
+    actionsBlock += `\n\nPROCEDURE-ONVOLKOMENHEDEN (questioning attitude) — VERTROUWELIJK, voor jouw beoordeling:
+Dit scenario bevatte met OPZET fouten in de procedure. Hieronder per onvolkomenheid de waarheid + of de deelnemer hem oppikte.
+${lines}
+BEOORDELINGSREGELS:
+- Een OPGEMERKTE onvolkomenheid (zeker een onveilige) is een sterk positief signaal van begrip/questioning attitude — benoem het en laat het de score positief beïnvloeden.
+- Een GEMISTE onvolkomenheid die de deelnemer klakkeloos uitvoerde is een leerpunt; weeg de ernst mee (hoe veiligheidskritischer, hoe zwaarder).
+- Een AFLEIDER die ONTERECHT als fout werd aangemerkt: benoem als nuance (te wantrouwig / onvoldoende onderbouwd), maar weeg lichter dan een echt gemiste fout.
+- Beoordeel de KWALITEIT van de detectie (begreep de deelnemer waaróm het fout was, of gokte hij?), niet alleen of hij iets riep.
+- Verwerk dit in de competentie 'Procedure-opvolging' én in minstens één leerpunt, en vul het veld "procedureCritique" in het JSON-antwoord.`;
+  }
+
   // Bedrijfscontext — beknopt herhalen in debrief zodat beoordeling de juiste
   // meldplichten, escalatie en LSR-set kent. Niet alle velden, alleen wat
   // direct beoordelings-relevant is.
@@ -8356,6 +8480,9 @@ GEEF JE DEBRIEF UITSLUITEND ALS GELDIG JSON-OBJECT — geen tekst eromheen, geen
   },
   "learningPoints": [
     { "type": "<strong|improve|core>", "tag": "<label>", "text": "<specifieke observatie met tijdstempel of concreet moment>" }
+  ],
+  "procedureCritique": [
+    { "id": "<imp-id>", "label": "<korte omschrijving van de onvolkomenheid>", "detected": "<yes|no|partial|falsePositive>", "comment": "<wat de deelnemer deed; bij gemist het leerpunt>" }
   ]
 }
 
@@ -8367,6 +8494,7 @@ Competenties — gebruik PRECIES deze vier, in deze volgorde, vertaald naar de s
 communicationAssessment: kies 4-6 relevante aspecten (niet alle zeven verplicht). De aspect-scores moeten consistent zijn met de competentie-score "Communicatie".
 Tijdlijn: max 8 momenten — alleen wat werkelijk significant was.
 Leerpunten: 2-3 items, minimaal één "improve" of "core". Een debrief zonder verbeterpunt is geen debrief.
+procedureCritique: vul dit ALLEEN als er hierboven procedure-onvolkomenheden zijn vermeld; geef per onvolkomenheid één item (detected: yes/no/partial, of falsePositive voor een onterecht geflagde afleider). Zijn er geen onvolkomenheden, laat de array dan leeg ([]).
 
 KRITISCHE JSON-REGELS — de output MOET geldige JSON zijn:
 - Gebruik GEEN dubbele aanhalingstekens (") binnen string-waarden; gebruik enkele aanhalingstekens (') of geen.
@@ -8386,6 +8514,7 @@ function getDebriefUILabels() {
     nl: { scenario:'Scenario', participant:'Deelnemer', duration:'Duur',
           timeline:'Tijdlijn', analysis:'Gedragsanalyse', comms:'Communicatie-doelmatigheid',
           commlog:'Communicatie-registratie', learning:'Leerpunten',
+          procedure:'Procedure-kritisch vermogen', procDetected:'Opgemerkt', procMissed:'Gemist', procPartial:'Deels', procFalse:'Onterecht geflagd',
           completed:'Voltooid', holdpoint:'Gestopt door hold-point',
           strengths:'Sterke punten', improves:'Verbeterpunten', quotes:'Illustratieve citaten uit de sessie',
           noTimeline:'Geen tijdlijndata beschikbaar.', noComms:'Geen communicatie geregistreerd tijdens dit scenario.',
@@ -8396,6 +8525,7 @@ function getDebriefUILabels() {
     de: { scenario:'Szenario', participant:'Teilnehmer', duration:'Dauer',
           timeline:'Zeitleiste', analysis:'Verhaltensanalyse', comms:'Kommunikations-Effektivität',
           commlog:'Kommunikationsprotokoll', learning:'Lernpunkte',
+          procedure:'Verfahrenskritisches Vermögen', procDetected:'Bemerkt', procMissed:'Übersehen', procPartial:'Teilweise', procFalse:'Fälschlich markiert',
           completed:'Abgeschlossen', holdpoint:'Durch Hold-Point gestoppt',
           strengths:'Stärken', improves:'Verbesserungspunkte', quotes:'Illustrative Zitate aus der Sitzung',
           noTimeline:'Keine Zeitleistendaten verfügbar.', noComms:'Keine Kommunikation aufgezeichnet.',
@@ -8406,6 +8536,7 @@ function getDebriefUILabels() {
     en: { scenario:'Scenario', participant:'Participant', duration:'Duration',
           timeline:'Timeline', analysis:'Behaviour analysis', comms:'Communication effectiveness',
           commlog:'Communication log', learning:'Learning points',
+          procedure:'Procedure-critical thinking', procDetected:'Noticed', procMissed:'Missed', procPartial:'Partial', procFalse:'Wrongly flagged',
           completed:'Completed', holdpoint:'Stopped by hold-point',
           strengths:'Strengths', improves:'Points to improve', quotes:'Illustrative quotes from the session',
           noTimeline:'No timeline data available.', noComms:'No communication recorded during this scenario.',
@@ -8416,6 +8547,7 @@ function getDebriefUILabels() {
     es: { scenario:'Escenario', participant:'Participante', duration:'Duración',
           timeline:'Cronología', analysis:'Análisis de comportamiento', comms:'Efectividad de la comunicación',
           commlog:'Registro de comunicación', learning:'Puntos de aprendizaje',
+          procedure:'Pensamiento crítico del procedimiento', procDetected:'Detectado', procMissed:'Omitido', procPartial:'Parcial', procFalse:'Marcado por error',
           completed:'Completado', holdpoint:'Detenido por hold-point',
           strengths:'Puntos fuertes', improves:'Puntos a mejorar', quotes:'Citas ilustrativas de la sesión',
           noTimeline:'No hay datos de cronología disponibles.', noComms:'No se registró comunicación durante este escenario.',
@@ -8553,6 +8685,18 @@ function renderFieldDebrief(d, fromHoldPoint) {
       </div>`;
     }).join('') || `<div class="dbf-empty">${L.noLearning}</div>`;
 
+    // Procedure-kritisch vermogen (questioning attitude)
+    const pc = Array.isArray(d.procedureCritique) ? d.procedureCritique : [];
+    const pcRows = pc.map(p => {
+      const det = ['yes','partial','falsePositive','no'].includes(p.detected) ? p.detected : 'no';
+      const detLbl = det === 'yes' ? L.procDetected : det === 'partial' ? L.procPartial : det === 'falsePositive' ? L.procFalse : L.procMissed;
+      const col = det === 'yes' ? '#2e7d32' : det === 'partial' ? '#e65100' : det === 'falsePositive' ? '#8e24aa' : '#c62828';
+      return `<div class="dbf-learn-item" style="border-left:3px solid ${col}">
+        <span class="dbf-learn-tag" style="background:${col}">${escapeHtml(detLbl)}</span>
+        <div class="dbf-learn-text">${escapeHtml(p.label || p.id || '')}${p.comment ? ' — ' + escapeHtml(p.comment) : ''}</div>
+      </div>`;
+    }).join('');
+
     const section = (key, icon, title, bodyHtml, count, openByDefault) => `
       <div class="dbf-section">
         <div class="dbf-sec-hdr" onclick="toggleDebriefSection('${key}')">
@@ -8576,7 +8720,8 @@ function renderFieldDebrief(d, fromHoldPoint) {
       section('analysis', '◈', L.analysis, `<div id="dbf-competency-grid">${compRows}</div>`, '', true) +
       section('comms', '📡', L.comms, `<div id="dbf-comms-container">${commsHtml}</div>`, '', true) +
       section('commlog', '🎙', L.commlog, `<div id="dbf-commlog">${commlogRows}</div>`, outCount ? outCount + '×' : '', false) +
-      section('learning', '→', L.learning, `<div id="dbf-learning-points">${lpRows}</div>`, lps.length || '', true);
+      section('learning', '→', L.learning, `<div id="dbf-learning-points">${lpRows}</div>`, lps.length || '', true) +
+      (pc.length ? section('procedure', '🔍', L.procedure, `<div id="dbf-procedure-points">${pcRows}</div>`, pc.length, true) : '');
 
     // Animeer balken na render
     setTimeout(() => {
@@ -9001,6 +9146,7 @@ function buildDebriefHTML() {
           timeline:'Tijdlijn', time:'Tijd', event:'Gebeurtenis', desc:'Omschrijving',
           comms:'Communicatie-doelmatigheid', aspect:'Aspect', strengths:'Sterke punten',
           improvements:'Verbeterpunten', quotes:'Illustratieve citaten', learning:'Leerpunten',
+          procedure:'Procedure-kritisch vermogen', procDetected:'Opgemerkt', procMissed:'Gemist', procPartial:'Deels', procFalse:'Onterecht geflagd',
           commlog:'Communicatie-registratie', speaker:'Spreker', message:'Bericht',
           assessment:'Eindoordeel', summary:'Samenvatting', noData:'—',
           tagStrong:'Sterk punt', tagImprove:'Verbeterpunt', tagCore:'Kernpunt',
@@ -9009,6 +9155,7 @@ function buildDebriefHTML() {
           timeline:'Zeitleiste', time:'Zeit', event:'Ereignis', desc:'Beschreibung',
           comms:'Kommunikations-Effektivität', aspect:'Aspekt', strengths:'Stärken',
           improvements:'Verbesserungspunkte', quotes:'Illustrative Zitate', learning:'Lernpunkte',
+          procedure:'Verfahrenskritisches Vermögen', procDetected:'Bemerkt', procMissed:'Übersehen', procPartial:'Teilweise', procFalse:'Fälschlich markiert',
           commlog:'Kommunikationsprotokoll', speaker:'Sprecher', message:'Nachricht',
           assessment:'Gesamturteil', summary:'Zusammenfassung', noData:'—',
           tagStrong:'Stärke', tagImprove:'Verbesserung', tagCore:'Kernpunkt',
@@ -9017,6 +9164,7 @@ function buildDebriefHTML() {
           timeline:'Timeline', time:'Time', event:'Event', desc:'Description',
           comms:'Communication effectiveness', aspect:'Aspect', strengths:'Strengths',
           improvements:'Improvements', quotes:'Illustrative quotes', learning:'Learning points',
+          procedure:'Procedure-critical thinking', procDetected:'Noticed', procMissed:'Missed', procPartial:'Partial', procFalse:'Wrongly flagged',
           commlog:'Communication log', speaker:'Speaker', message:'Message',
           assessment:'Overall assessment', summary:'Summary', noData:'—',
           tagStrong:'Strong point', tagImprove:'Improvement', tagCore:'Core point',
@@ -9025,6 +9173,7 @@ function buildDebriefHTML() {
           timeline:'Cronología', time:'Tiempo', event:'Evento', desc:'Descripción',
           comms:'Efectividad de la comunicación', aspect:'Aspecto', strengths:'Puntos fuertes',
           improvements:'Puntos a mejorar', quotes:'Citas ilustrativas', learning:'Puntos de aprendizaje',
+          procedure:'Pensamiento crítico del procedimiento', procDetected:'Detectado', procMissed:'Omitido', procPartial:'Parcial', procFalse:'Marcado por error',
           commlog:'Registro de comunicación', speaker:'Interlocutor', message:'Mensaje',
           assessment:'Valoración general', summary:'Resumen', noData:'—',
           tagStrong:'Punto fuerte', tagImprove:'Mejora', tagCore:'Punto clave',
@@ -9034,6 +9183,7 @@ function buildDebriefHTML() {
           timeline:'Tijdlijn', time:'Tijd', event:'Gebeurtenis', desc:'Omschrijving',
           comms:'Communicatie-doelmatigheid', aspect:'Aspect', strengths:'Sterke punten',
           improvements:'Verbeterpunten', quotes:'Illustratieve citaten', learning:'Leerpunten',
+          procedure:'Procedure-kritisch vermogen', procDetected:'Opgemerkt', procMissed:'Gemist', procPartial:'Deels', procFalse:'Onterecht geflagd',
           commlog:'Communicatie-registratie', speaker:'Spreker', message:'Bericht',
           assessment:'Eindoordeel', summary:'Samenvatting', noData:'—',
           tagStrong:'Sterk punt', tagImprove:'Verbeterpunt', tagCore:'Kernpunt',
@@ -9256,6 +9406,23 @@ function buildDebriefHTML() {
         </tr></thead><tbody>${commlogRows}</tbody></table>`
       : `<p style="color:#888;font-style:italic">${DL.noComms}</p>`}`;
 
+  // ── Procedure-kritisch vermogen (questioning attitude) ──
+  let procedureBlock = '';
+  const pc = Array.isArray(d && d.procedureCritique) ? d.procedureCritique : [];
+  if (pc.length) {
+    const badge = (det) => {
+      const map = { yes:['#2e7d32', DL.procDetected], partial:['#e65100', DL.procPartial], falsePositive:['#8e24aa', DL.procFalse], no:['#c62828', DL.procMissed] };
+      const key = ['yes','partial','falsePositive','no'].includes(det) ? det : 'no';
+      const cl = map[key];
+      return `<span style="background:${cl[0]};color:#fff;padding:1px 7px;border-radius:3px;font-size:11px">${escapeHtml(cl[1])}</span>`;
+    };
+    const rows = pc.map(p => `<li style="margin-bottom:8px">
+      ${badge(p.detected)}
+      <span style="color:#333;font-size:13px;margin-left:6px">${escapeHtml(p.label || p.id || '')}${p.comment ? ' — ' + escapeHtml(p.comment) : ''}</span>
+    </li>`).join('');
+    procedureBlock = `<h3>${DL.procedure}</h3><ul style="padding-left:16px;list-style:none;margin:0">${rows}</ul>`;
+  }
+
   // Fallback wanneer er geen gestructureerde data is
   const fallbackBlock = !d
     ? `<h3>${L.debrief}</h3><div class="debrief-body">${escapeHtml(STATE.debriefText || '—')}</div>`
@@ -9327,6 +9494,7 @@ ${isIncident && logRows ? `<h3>${L.actionLog}</h3><table>${logRows}</table>` : '
 ${isIncident && !logRows ? `<h3>${L.actionLog}</h3><p style="color:#888;font-style:italic">${L.noLog}</p>` : ''}
 
 ${learningBlock}
+${procedureBlock}
 ${commlogBlock}
 ${fallbackBlock}
 
